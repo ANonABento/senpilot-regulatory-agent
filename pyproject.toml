@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "regulatory-agent"
+version = "0.1.0"
+description = "Senpilot F26 take-home: email-triggered UARB regulatory document agent"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+regulatory-agent = "regulatory_agent.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "live: hits live UARB website (deselect with -m 'not live')",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

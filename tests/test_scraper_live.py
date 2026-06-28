@@ -1,0 +1,3 @@
+# Placeholder for live UARB integration test — see docs/TESTING.md
+# @pytest.mark.live
+# def test_scrape_m12205_other_documents(): ...

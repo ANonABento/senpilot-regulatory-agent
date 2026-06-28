@@ -59,6 +59,38 @@ def _go_get_it_buttons(page: Page):
     return page.get_by_role("button", name=_GO_GET_IT)
 
 
+def _row_signatures(page: Page) -> list[str]:
+    """Row text for each rendered GO GET IT button, in the same DOM order Playwright's
+    ``nth(i)`` uses. Lets us skip already-downloaded rows *without* re-clicking them
+    (re-opening a download dialog resets the grid's scroll, stalling progress)."""
+    return page.evaluate(
+        """() => [...document.querySelectorAll('button')]
+            .filter(b => /go get it/i.test(b.innerText))
+            .map(b => { const tr = b.closest('tr');
+                        return tr ? tr.innerText.replace(/\\s+/g, ' ').trim() : ''; })"""
+    )
+
+
+def _click_go_get_it(page: Page, index: int) -> bool:
+    """Click the nth GO GET IT button, tolerating the glass-pane overlay.
+
+    The ``iwp-glass-pane`` header overlay intermittently intercepts pointer events;
+    a normal click then burns the full timeout. Use a short timeout and fall back to
+    a forced click (which bypasses the hit-test) so a transient overlay can't stall
+    the run for a minute.
+    """
+    try:
+        _go_get_it_buttons(page).nth(index).click(timeout=12_000)
+        return True
+    except Exception:
+        try:
+            _go_get_it_buttons(page).nth(index).click(force=True, timeout=8_000)
+            return True
+        except Exception as exc:
+            logger.warning("GO GET IT click %d failed: %s", index, str(exc).splitlines()[0])
+            return False
+
+
 def _capture_resource_url(page: Page, frames: list[str], mark: int) -> str | None:
     """Wait for the download dialog's resource URL to arrive on the websocket."""
     for _ in range(20):
@@ -137,36 +169,41 @@ def download_documents(page: Page, ws_frames: list[str], max_count: int = 10) ->
     """Download up to ``max_count`` files from the selected document tab.
 
     Rows are addressed by button index within the current viewport and de-duplicated
-    by their captured resource URL — the only reliable per-file identifier. (Document
-    IDs vary by tab: numeric for Other Documents, ``H-1`` style for Exhibits, so a
-    parsed "doc number" is not dependable.) The virtualized grid is scrolled to reach
-    rows beyond the rendered batch; re-clicking an already-seen row is harmless because
-    its URL is skipped. ``ws_frames`` is the list from :func:`browser.capture_ws_frames`.
+    by document filename — the stable per-file identifier. (Document IDs vary by tab:
+    numeric for Other Documents, ``H-1`` style for Exhibits, so a parsed "doc number"
+    is not dependable; and a re-clicked row gets a fresh connector id, so the full
+    resource URL isn't stable either.) The virtualized grid is scrolled to reach rows
+    beyond the rendered batch; re-clicking an already-seen row is harmless because its
+    filename is skipped. ``ws_frames`` is the list from :func:`browser.capture_ws_frames`.
     """
     settings.download_dir.mkdir(parents=True, exist_ok=True)
     downloads: list[Path] = []
     used_names: set[str] = set()
-    seen_urls: set[str] = set()
+    seen_rows: set[str] = set()
+    seen_files: set[str] = set()
     stagnant = 0
 
     while len(downloads) < max_count and stagnant < 3:
         progressed = False
-        count = _go_get_it_buttons(page).count()
-        for i in range(count):
+        signatures = _row_signatures(page)
+        for i, sig in enumerate(signatures):
             if len(downloads) >= max_count:
                 break
+            if not sig or sig in seen_rows:  # already handled this row; don't re-click it
+                continue
+            seen_rows.add(sig)
             mark = len(ws_frames)
-            try:
-                _go_get_it_buttons(page).nth(i).click()
-            except Exception as exc:
-                logger.warning("GO GET IT click %d failed: %s", i, exc)
+            if not _click_go_get_it(page, i):
                 _close_dialog(page)
                 continue
             url_path = _capture_resource_url(page, ws_frames, mark)
-            # Fetch while the dialog is still open: closing it destroys the Vaadin
-            # FileDownloader connector that serves the resource (otherwise 404).
-            if url_path and url_path not in seen_urls:
-                seen_urls.add(url_path)
+            # Secondary de-dupe by filename guards the rare case where the same file
+            # surfaces under two rows / a fresh connector id.
+            doc_name = unquote(url_path.rsplit("/", 1)[-1]) if url_path else None
+            if doc_name and doc_name not in seen_files:
+                seen_files.add(doc_name)
+                # Fetch while the dialog is still open: closing it destroys the Vaadin
+                # FileDownloader connector that serves the resource (otherwise 404).
                 path = _fetch_and_save(page, url_path, len(downloads) + 1, used_names)
                 if path:
                     downloads.append(path)

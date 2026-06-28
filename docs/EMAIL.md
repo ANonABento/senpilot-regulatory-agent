@@ -8,7 +8,18 @@
    - Total file counts for all tabs on that matter
    - Metadata summary (title, category, dates, etc.)
 
-## Recommended approach: Gmail API
+## Shipped implementation (IMAP + SMTP, App Password)
+
+> **What actually ships** (`email/gmail.py`): plain **IMAP** to poll unread and **SMTP** to
+> send, authenticated with a Gmail **App Password** — not the Gmail API / OAuth described below.
+> An App Password needs no consent screen and doesn't expire (unlike an OAuth refresh token in
+> "testing" status, which dies after 7 days), so it's far more robust for an unattended worker
+> on GitHub Actions. Only `GMAIL_ADDRESS` and `GMAIL_APP_PASSWORD` are needed (see `.env.example`).
+> The transport is split from pure builders/parsers (`build_message`, `parse_inbound`) so the
+> logic unit-tests without a network. The OAuth notes below are kept as the original design
+> rationale and a fallback option.
+
+## Original design: Gmail API
 
 Best balance for a take-home: OAuth to a dedicated Gmail account, poll inbox, send replies.
 

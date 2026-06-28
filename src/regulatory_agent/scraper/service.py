@@ -6,7 +6,7 @@ import logging
 
 from regulatory_agent.config import settings
 from regulatory_agent.models import DocumentType, ScrapeResult
-from regulatory_agent.scraper.browser import BrowserSession
+from regulatory_agent.scraper.browser import BrowserSession, capture_ws_frames
 from regulatory_agent.scraper.download import download_documents, select_document_tab
 from regulatory_agent.scraper.metadata import extract_matter_metadata, extract_tab_counts
 from regulatory_agent.scraper.navigate import go_to_matter
@@ -27,12 +27,14 @@ def scrape_matter(
     settings.download_dir.mkdir(parents=True, exist_ok=True)
 
     with BrowserSession(headless=headless) as page:
+        # Register the websocket listener before navigation opens the Vaadin push channel.
+        ws_frames = capture_ws_frames(page)
         go_to_matter(page, matter_number)
         metadata = extract_matter_metadata(page)
         tab_counts = extract_tab_counts(page)
         select_document_tab(page, document_type)
         available = tab_counts.for_type(document_type)
-        files = download_documents(page, max_count=cap)
+        files = download_documents(page, ws_frames, max_count=cap)
         zip_path = create_zip(files, matter_number, document_type.value)
 
     return ScrapeResult(

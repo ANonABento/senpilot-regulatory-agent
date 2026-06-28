@@ -17,17 +17,20 @@ def test_scrape_m12205_other_documents() -> None:
 
     assert result.matter_number == "M12205"
     assert result.requested_document_type == DocumentType.OTHER_DOCUMENTS
-    assert result.downloaded_count == 10
-    assert result.available_in_tab == 21
 
-    assert result.tab_counts.exhibits == 13
-    assert result.tab_counts.key_documents == 5
-    assert result.tab_counts.other_documents == 21
+    # Live counts drift as filings are added (Other Documents was 21 in the spec, 42
+    # as of 2026-06); assert the invariants, not the exact live numbers.
+    assert result.downloaded_count == 10
+    assert result.available_in_tab >= 10
+    assert result.available_in_tab == result.tab_counts.other_documents
+    assert result.tab_counts.exhibits > 0
+    assert result.tab_counts.key_documents > 0
     assert result.tab_counts.transcripts == 0
     assert result.tab_counts.recordings == 0
 
     assert result.metadata.title_description is not None
     assert "Halifax Regional Water Commission" in result.metadata.title_description
+    assert result.metadata.status is not None
     assert result.metadata.type_category is not None
     assert "Water" in result.metadata.type_category
     assert result.metadata.date_received is not None

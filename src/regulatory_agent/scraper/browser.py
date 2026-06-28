@@ -15,9 +15,22 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# Vaadin (FileMaker WebDirect is built on Vaadin) shows a `.v-loading-indicator`
+# element during server round-trips. Note: `.iwp-glass-pane` is NOT a single loading
+# overlay — it is a class applied to dozens of permanently-visible widgets, so waiting
+# for it to become "hidden" never succeeds. Use the loading indicator instead.
+_LOADING_IDLE_JS = """() => {
+    const els = document.querySelectorAll('.v-loading-indicator');
+    for (const el of els) {
+        if (getComputedStyle(el).display !== 'none') return false;
+    }
+    return true;
+}"""
+
+
 def wait_for_ready(page: Page, timeout_ms: int | None = None) -> None:
-    """Wait for page load and FileMaker glass-pane overlay to clear."""
-    timeout = timeout_ms or settings.page_load_timeout_ms
+    """Wait until FileMaker/Vaadin has finished its current server round-trip."""
+    timeout = timeout_ms or settings.action_timeout_ms
     try:
         page.wait_for_load_state("networkidle", timeout=timeout)
     except Exception:
@@ -25,11 +38,32 @@ def wait_for_ready(page: Page, timeout_ms: int | None = None) -> None:
             page.wait_for_load_state("domcontentloaded", timeout=timeout)
         except Exception:
             pass
-        page.wait_for_timeout(2000)
     try:
-        page.locator(".iwp-glass-pane").first.wait_for(state="hidden", timeout=timeout)
+        page.wait_for_function(_LOADING_IDLE_JS, timeout=timeout)
     except Exception:
-        logger.warning("Glass pane still visible after %dms; continuing", timeout)
+        logger.debug("Vaadin loading indicator still active after %dms; continuing", timeout)
+    page.wait_for_timeout(800)
+
+
+def capture_ws_frames(page: Page) -> list[str]:
+    """Record inbound Vaadin push frames so the downloader can recover file URLs.
+
+    FileMaker WebDirect delivers the "GO GET IT" download dialog — including the
+    resource URL of each file — over a websocket, not HTTP. Must be called before
+    the page navigates, while the websocket is still being opened.
+    """
+    frames: list[str] = []
+
+    def on_websocket(ws) -> None:
+        ws.on(
+            "framereceived",
+            lambda payload: frames.append(
+                payload if isinstance(payload, str) else str(payload)
+            ),
+        )
+
+    page.on("websocket", on_websocket)
+    return frames
 
 
 class BrowserSession:

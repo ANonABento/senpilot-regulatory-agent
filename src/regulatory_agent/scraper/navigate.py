@@ -69,10 +69,13 @@ def go_to_matter(page: Page, matter_number: str) -> None:
     _fill_matter_number(page, matter_number)
     _click_direct_matter_search(page)
 
+    # The detail page is confirmed by tab-count labels (e.g. "Exhibits - 13"), which
+    # only render on a matter page — not the homepage where the matter number merely
+    # sits in the search field. Waiting on the matter number alone returns immediately.
     try:
         page.wait_for_function(
-            f"() => document.body && document.body.innerText.includes('{matter_number}')",
-            timeout=settings.page_load_timeout_ms * 2,
+            "() => document.body && /Exhibits\\s*-\\s*\\d+/.test(document.body.innerText)",
+            timeout=settings.page_load_timeout_ms,
         )
     except Exception as exc:
         body = page.locator("body").inner_text()

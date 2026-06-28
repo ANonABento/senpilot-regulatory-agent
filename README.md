@@ -6,14 +6,16 @@ Take-home project for **Senpilot Software Engineering Intern (F26 Challenge)**.
 
 ## Status
 
-**Planning / scaffold phase.** Detailed specs live in [`docs/`](./docs/). Implementation follows phased plan in [docs/IMPLEMENTATION.md](./docs/IMPLEMENTATION.md).
+**Phase 1 done & live-validated; email + agent layers pending.** Detailed specs live in [`docs/`](./docs/). Implementation follows phased plan in [docs/IMPLEMENTATION.md](./docs/IMPLEMENTATION.md).
 
 | Phase | Description | Status |
 |-------|-------------|--------|
-| 1 | Playwright scraper + CLI | Not started |
-| 2 | Email receive/send | Not started |
-| 3 | LLM parse + reply | Not started |
+| 1 | Playwright scraper + CLI | **Done** — live scrape of M12205 validated end-to-end |
+| 2 | Email receive/send | Stubs only |
+| 3 | LLM parse + reply | Stubs only |
 | 4 | Demo + polish | Not started |
+
+> Phase 1 is validated against the live UARB site (`pytest -m live` passes): navigation, tab counts (13/5/42/0/0), header metadata via column-geometry extraction, 10 PDFs pulled from a virtualized Vaadin grid, and a single ZIP. Downloads capture each file's resource URL from FileMaker WebDirect's websocket and fetch it directly (the GO GET IT dialog's `window.open` download does not fire headlessly). Other Documents is now **42** live (was 21 in the spec) — counts are read live, never hardcoded.
 
 ## What it does (target behavior)
 
@@ -37,26 +39,30 @@ Take-home project for **Senpilot Software Engineering Intern (F26 Challenge)**.
 
 ## Setup (for implementers)
 
-```powershell
+```bash
 git clone https://github.com/ANonABento/senpilot-regulatory-agent.git
 cd senpilot-regulatory-agent
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+source .venv/bin/activate        # Windows: .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 playwright install chromium
-copy .env.example .env
+cp .env.example .env             # Windows: copy .env.example .env
 # Fill in API keys — see docs/EMAIL.md and docs/AGENT.md
 ```
 
-## Usage (once implemented)
+## Usage
 
-```powershell
-# Scrape locally (Phase 1)
+```bash
+# Scrape locally (Phase 1 — implemented)
 python -m regulatory_agent scrape M12205 --type "Other Documents" --json
+python -m regulatory_agent scrape M12205 --type "Other Documents" --max 3 --headed
 
-# Process one email poll cycle (Phase 2)
+# Phase 2/3 — not yet implemented (commands exit 2)
 python -m regulatory_agent worker --once
+python -m regulatory_agent parse-email --file tests/fixtures/sample_request_email.txt
 ```
+
+Run unit tests (no network): `pytest -m "not live"`. Live scrape test: `pytest -m live`.
 
 ## Tech stack
 

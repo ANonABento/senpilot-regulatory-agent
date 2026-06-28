@@ -94,13 +94,8 @@ def _is_title(text: str) -> bool:
     return "$" in text or (" - " in text and len(text) > 40)
 
 
-def _value_columns(nodes: list[dict]) -> list[list[str]]:
-    """Cluster value-band leaf nodes into columns (by x), each ordered top to bottom.
-
-    The header labels ("Matter No", "Type", ...) are two-line containers with child
-    elements, so they are not leaf nodes — we identify columns by their values' content
-    instead of by anchoring to a label.
-    """
+def _value_columns(nodes: list[dict]) -> list[dict]:
+    """Cluster value-band leaf nodes into columns. Each column: {x, texts (top→bottom)}."""
     band = [n for n in nodes if _VALUE_BAND[0] <= n["y"] <= _VALUE_BAND[1]]
     columns: list[dict] = []
     for n in sorted(band, key=lambda n: n["x"]):
@@ -110,39 +105,58 @@ def _value_columns(nodes: list[dict]) -> list[list[str]]:
             columns.append(col)
         col["nodes"].append(n)
         col["x"] = sum(m["x"] for m in col["nodes"]) / len(col["nodes"])
-    result: list[list[str]] = []
     for col in columns:
         ordered = sorted(col["nodes"], key=lambda n: n["y"])
-        texts: list[str] = []
-        for n in ordered:
-            texts.extend(part.strip() for part in n["t"].split("\n") if part.strip())
-        result.append(texts)
-    return result
+        col["texts"] = [
+            part.strip() for n in ordered for part in n["t"].split("\n") if part.strip()
+        ]
+    return columns
+
+
+def _label_x(nodes: list[dict], label: str) -> float | None:
+    """X of a header label leaf node (labels sit just above the value band)."""
+    for n in nodes:
+        if n["y"] < _VALUE_BAND[0] and n["t"].strip().lower() == label.lower():
+            return n["x"]
+    return None
 
 
 def extract_matter_metadata(page: Page) -> MatterMetadata:
-    """Map header values to fields by column geometry, with body-text fallbacks."""
+    """Map header values to fields by column geometry, with body-text fallbacks.
+
+    Columns are anchored to the labels that *are* leaf nodes ("Title - Description",
+    "Date Received", "Outcome"); the two-line "Matter No/Status" and "Type/Category"
+    labels are not leaf nodes, so those columns are found positionally between anchors.
+    This keeps the far-right Outcome value from being mistaken for Type/Category on
+    matters where Outcome is populated.
+    """
     body = page.locator("body").inner_text()
     nodes = _leaf_text_nodes(page)
 
     matter_match = MATTER_NO.search(body)
     matter_number = matter_match.group(1) if matter_match else "UNKNOWN"
 
-    status = type_value = category = title = None
+    title_x = _label_x(nodes, "Title - Description")
+    received_x = _label_x(nodes, "Date Received")
+    outcome_x = _label_x(nodes, "Outcome")
+
+    status = type_value = category = outcome = title = None
     try:
-        for texts in _value_columns(nodes):
+        for col in _value_columns(nodes):
+            texts, x = col["texts"], col["x"]
             if not texts:
                 continue
             top = texts[0]
-            if MATTER_NO.fullmatch(top):  # Matter No (top) / Status (bottom) column
+            if MATTER_NO.fullmatch(top):  # Matter No (top) / Status (bottom)
                 status = texts[1] if len(texts) > 1 else status
-            elif DATE_VALUE.fullmatch(top):  # date columns: handled via body fallback
-                continue
-            elif _is_title(top):  # Title - Description column
+            elif _is_title(top):  # Title - Description column (rarely a leaf)
                 title = top
-            else:  # Type (top) / Category (bottom) column
+            elif title_x is not None and received_x is not None and title_x < x < received_x:
+                # The Type (top) / Category (bottom) column sits between these labels.
                 type_value = top
                 category = texts[1] if len(texts) > 1 else None
+            elif outcome_x is not None and abs(x - outcome_x) <= 90 and not DATE_VALUE.fullmatch(top):
+                outcome = top
     except Exception as exc:  # geometry is best-effort; fall back to body parsing
         logger.debug("Geometry metadata extraction failed: %s", exc)
 
@@ -162,5 +176,5 @@ def extract_matter_metadata(page: Page) -> MatterMetadata:
         type_category=_clean(type_category),
         date_received=_parse_date(received),
         date_final_submissions=_parse_date(final),
-        outcome=None,
+        outcome=_clean(outcome),
     )

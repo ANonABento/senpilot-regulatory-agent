@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
+from urllib.parse import unquote
 
 from playwright.sync_api import Page
 
@@ -43,7 +44,8 @@ def select_document_tab(page: Page, document_type: DocumentType) -> None:
 
 
 def _sanitize_filename(filename: str, index: int, used: set[str]) -> str:
-    base = _UNSAFE_CHARS.sub("_", filename).strip() or f"document_{index}.pdf"
+    # Resource URLs percent-encode the name (e.g. "H-4%28C%29.pdf" -> "H-4(C).pdf").
+    base = _UNSAFE_CHARS.sub("_", unquote(filename)).strip() or f"document_{index}.pdf"
     if base not in used:
         used.add(base)
         return base
@@ -53,33 +55,8 @@ def _sanitize_filename(filename: str, index: int, used: set[str]) -> str:
     return candidate
 
 
-def _visible_rows(page: Page) -> list[dict]:
-    """Return [{docno, row_index}] for each rendered grid row that has a GO GET IT button."""
-    return page.evaluate(
-        """() => {
-            const rows = [];
-            document.querySelectorAll('.v-grid-body tr').forEach(tr => {
-                const hasBtn = [...tr.querySelectorAll('button')].some(
-                    b => /go get it/i.test(b.innerText));
-                if (!hasBtn) return;
-                const m = tr.innerText.match(/\\b(\\d{4,7})\\b/);
-                rows.push({docno: m ? m[1] : null,
-                           row_index: tr.getAttribute('aria-rowindex')});
-            });
-            return rows;
-        }"""
-    )
-
-
-def _click_go_get_it_for(page: Page, docno: str) -> bool:
-    """Click the GO GET IT button in the row containing ``docno``. Returns True on click."""
-    button = page.locator(".v-grid-body tr", has_text=docno).get_by_role(
-        "button", name=_GO_GET_IT
-    )
-    if button.count() == 0:
-        return False
-    button.first.click()
-    return True
+def _go_get_it_buttons(page: Page):
+    return page.get_by_role("button", name=_GO_GET_IT)
 
 
 def _capture_resource_url(page: Page, frames: list[str], mark: int) -> str | None:
@@ -159,44 +136,47 @@ def _scroll_grid(page: Page) -> None:
 def download_documents(page: Page, ws_frames: list[str], max_count: int = 10) -> list[Path]:
     """Download up to ``max_count`` files from the selected document tab.
 
-    ``ws_frames`` is the live list returned by :func:`browser.capture_ws_frames`.
+    Rows are addressed by button index within the current viewport and de-duplicated
+    by their captured resource URL — the only reliable per-file identifier. (Document
+    IDs vary by tab: numeric for Other Documents, ``H-1`` style for Exhibits, so a
+    parsed "doc number" is not dependable.) The virtualized grid is scrolled to reach
+    rows beyond the rendered batch; re-clicking an already-seen row is harmless because
+    its URL is skipped. ``ws_frames`` is the list from :func:`browser.capture_ws_frames`.
     """
     settings.download_dir.mkdir(parents=True, exist_ok=True)
     downloads: list[Path] = []
     used_names: set[str] = set()
-    processed: set[str] = set()
+    seen_urls: set[str] = set()
     stagnant = 0
 
     while len(downloads) < max_count and stagnant < 3:
-        rows = [r for r in _visible_rows(page) if r["docno"] and r["docno"] not in processed]
-        if not rows:
-            seen_before = {r["docno"] for r in _visible_rows(page)}
-            _scroll_grid(page)
-            seen_after = {r["docno"] for r in _visible_rows(page)}
-            stagnant = stagnant + 1 if seen_after <= seen_before else 0
-            continue
-
-        for row in rows:
+        progressed = False
+        count = _go_get_it_buttons(page).count()
+        for i in range(count):
             if len(downloads) >= max_count:
                 break
-            docno = row["docno"]
-            processed.add(docno)
             mark = len(ws_frames)
             try:
-                if not _click_go_get_it_for(page, docno):
-                    continue
+                _go_get_it_buttons(page).nth(i).click()
             except Exception as exc:
-                logger.warning("Click failed for doc %s: %s", docno, exc)
+                logger.warning("GO GET IT click %d failed: %s", i, exc)
                 _close_dialog(page)
                 continue
             url_path = _capture_resource_url(page, ws_frames, mark)
-            if url_path:
+            # Fetch while the dialog is still open: closing it destroys the Vaadin
+            # FileDownloader connector that serves the resource (otherwise 404).
+            if url_path and url_path not in seen_urls:
+                seen_urls.add(url_path)
                 path = _fetch_and_save(page, url_path, len(downloads) + 1, used_names)
                 if path:
                     downloads.append(path)
-            else:
-                logger.warning("No resource URL captured for doc %s", docno)
+                    progressed = True
             _close_dialog(page)
+
+        if len(downloads) >= max_count:
+            break
+        _scroll_grid(page)
+        stagnant = 0 if progressed else stagnant + 1
 
     logger.info("Downloaded %d file(s)", len(downloads))
     return downloads

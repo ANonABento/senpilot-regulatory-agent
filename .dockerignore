@@ -1,9 +1,0 @@
-.venv
-.git
-.env
-output
-downloads
-__pycache__
-*.pyc
-.pytest_cache
-.github

@@ -1,22 +1,25 @@
 name: regulatory-agent-worker
 
-# Always-on email poller. Every ~5 minutes (GitHub's minimum; scheduled runs can
-# lag under load) it checks the agent inbox, scrapes UARB for any request, and
-# replies with the ZIP. Credentials come from repo Actions secrets, never the repo.
+# GitHub's `schedule:` cron is unreliable for frequent polling — runs lag badly or get
+# dropped entirely. So rather than depend on it, this workflow is a SELF-PERPETUATING
+# CHAIN: each run polls the inbox once, then dispatches the next run. That keeps the
+# agent polling every few minutes, reliably, with no external host.
 #
-# Required secrets (Settings -> Secrets and variables -> Actions):
-#   GMAIL_ADDRESS, GMAIL_APP_PASSWORD
+# The re-dispatch needs a PAT (secret WORKER_PAT) because GitHub deliberately blocks the
+# default GITHUB_TOKEN from triggering further workflow runs (anti-recursion). The
+# schedule below is only a best-effort backup poll if the chain ever stops.
 #
-# Note: GitHub disables scheduled workflows after 60 days of no repo activity.
+# Required secrets: GMAIL_ADDRESS, GMAIL_APP_PASSWORD, WORKER_PAT
+# To (re)start the chain: trigger once via the Actions tab or `gh workflow run agent.yml`.
 
 on:
+  workflow_dispatch: {}
   schedule:
-    - cron: "*/5 * * * *"
-  workflow_dispatch: {} # manual "Run workflow" button for testing
+    - cron: "*/15 * * * *" # best-effort backup only (GitHub cron is laggy)
 
 concurrency:
   group: regulatory-agent-worker
-  cancel-in-progress: false # never kill an in-flight scrape
+  cancel-in-progress: false # chained runs queue instead of overlapping
 
 jobs:
   poll:
@@ -29,26 +32,36 @@ jobs:
       LOG_LEVEL: INFO
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
-
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install -e .
-
       - name: Cache Playwright browser
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
-
       - name: Install Chromium
         run: python -m playwright install --with-deps chromium
-
       - name: Poll inbox once
         run: python -m regulatory_agent worker --once
+
+      # Keep the chain alive. Runs even if the poll step failed (if: always), but only
+      # from workflow_dispatch runs — schedule-triggered backups don't chain, so the
+      # loop never widens into multiple parallel chains.
+      - name: Dispatch the next run
+        if: ${{ always() && github.event_name == 'workflow_dispatch' }}
+        env:
+          GH_TOKEN: ${{ secrets.WORKER_PAT }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::WORKER_PAT not set — self-chain disabled; only the laggy schedule backup will run."
+            exit 0
+          fi
+          sleep 180                # cadence control: ~5-min loop (raise to slow it down)
+          gh workflow run agent.yml --repo "${{ github.repository }}"

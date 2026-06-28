@@ -1,0 +1,54 @@
+name: regulatory-agent-worker
+
+# Always-on email poller. Every ~5 minutes (GitHub's minimum; scheduled runs can
+# lag under load) it checks the agent inbox, scrapes UARB for any request, and
+# replies with the ZIP. Credentials come from repo Actions secrets, never the repo.
+#
+# Required secrets (Settings -> Secrets and variables -> Actions):
+#   GMAIL_ADDRESS, GMAIL_APP_PASSWORD
+#
+# Note: GitHub disables scheduled workflows after 60 days of no repo activity.
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {} # manual "Run workflow" button for testing
+
+concurrency:
+  group: regulatory-agent-worker
+  cancel-in-progress: false # never kill an in-flight scrape
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+      GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+      HEADLESS: "true"
+      LOG_LEVEL: INFO
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e .
+
+      - name: Cache Playwright browser
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+
+      - name: Poll inbox once
+        run: python -m regulatory_agent worker --once

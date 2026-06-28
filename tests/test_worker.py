@@ -22,11 +22,11 @@ class FakeProvider:
         self.marked.append(message_id)
 
 
-def _inbound(mid: str) -> InboundEmail:
+def _inbound(mid: str, sender: str = "user@example.com") -> InboundEmail:
     return InboundEmail(
         message_id=mid,
         thread_id=f"t-{mid}",
-        sender="user@example.com",
+        sender=sender,
         subject="req",
         body_text="Other Documents for M12205",
         received_at=datetime(2026, 6, 28, tzinfo=timezone.utc),
@@ -58,6 +58,19 @@ def test_processor_exception_still_marks_and_sends_error() -> None:
     assert provider.marked == ["a"]  # marked despite failure
     assert len(provider.sent) == 1
     assert "internal error" in provider.sent[0].body_text
+
+
+def test_automated_sender_is_marked_but_not_replied() -> None:
+    provider = FakeProvider([_inbound("a", sender="Google <no-reply@accounts.google.com>")])
+
+    def must_not_send(inbound: InboundEmail) -> OutboundEmail:
+        raise AssertionError("must not process automated senders")
+
+    handled = process_inbox_once(provider, processor=must_not_send)
+
+    assert handled == 1
+    assert provider.sent == []  # no reply, no bounce loop
+    assert provider.marked == ["a"]  # but marked read so it isn't re-fetched
 
 
 def test_empty_inbox_handles_nothing() -> None:

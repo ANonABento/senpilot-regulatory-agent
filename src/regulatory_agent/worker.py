@@ -27,19 +27,43 @@ def process_inbox_once(
     """Process every currently-unread email once. Returns the number handled."""
     handled = 0
     for inbound in provider.poll_unread():
+        handled += 1
+        # Never reply to automated senders — a reply to no-reply/mailer-daemon
+        # bounces, and the bounce would loop back as another unread message.
+        if _is_automated_sender(inbound.sender):
+            logger.info("Skipping automated sender %s", inbound.sender)
+            _safe_mark(provider, inbound)
+            continue
         try:
-            outbound = processor(inbound)
-            provider.send(outbound)
+            provider.send(processor(inbound))
         except Exception:  # noqa: BLE001 — one bad email must not stop the batch
             logger.exception("Failed to process message %s", inbound.message_id)
             _try_send_error(provider, inbound)
         finally:
-            try:
-                provider.mark_processed(inbound.message_id)
-            except Exception:  # noqa: BLE001
-                logger.exception("Failed to mark %s processed", inbound.message_id)
-        handled += 1
+            _safe_mark(provider, inbound)
     return handled
+
+
+_AUTOMATED_MARKERS = (
+    "no-reply",
+    "noreply",
+    "do-not-reply",
+    "donotreply",
+    "mailer-daemon",
+    "postmaster",
+)
+
+
+def _is_automated_sender(sender: str) -> bool:
+    s = sender.lower()
+    return any(marker in s for marker in _AUTOMATED_MARKERS)
+
+
+def _safe_mark(provider: EmailProvider, inbound: InboundEmail) -> None:
+    try:
+        provider.mark_processed(inbound.message_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("Failed to mark %s processed", inbound.message_id)
 
 
 def _try_send_error(provider: EmailProvider, inbound: InboundEmail) -> None:

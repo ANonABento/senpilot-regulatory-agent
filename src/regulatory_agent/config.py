@@ -25,12 +25,14 @@ class Settings(BaseSettings):
     llm_provider: str = "openai"
     llm_model: str = "gpt-4o-mini"
 
-    # Gmail
-    gmail_client_id: str | None = None
-    gmail_client_secret: str | None = None
-    gmail_refresh_token: str | None = None
-    gmail_sender_address: str | None = None
-    gmail_poll_label: str = "INBOX"
+    # Gmail (IMAP poll + SMTP send, authenticated with an App Password)
+    gmail_address: str | None = None
+    gmail_app_password: str | None = None
+    imap_host: str = "imap.gmail.com"
+    imap_port: int = 993
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 465
+    mailbox: str = "INBOX"
     poll_interval_sec: int = 45
 
 

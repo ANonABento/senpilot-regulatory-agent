@@ -57,18 +57,19 @@ If `networkidle` is flaky, fall back to `domcontentloaded` + fixed delay + glass
 ### `go_to_matter(page, matter_number: str) -> None`
 
 1. `page.goto(UARB_BASE_URL)`
-2. `wait_for_ready(page)`
-3. Click text `eg M01234` (or locator near "Go Directly to Matter")
-4. `page.keyboard.type(matter_number)`
-5. Click Search button in direct-matter section:
-   - Prefer: `page.get_by_role("button", name="Search").last`
-   - Use `force=True` only if overlay race persists after `wait_for_ready`
-6. `wait_for_ready(page)`
-7. Assert matter page loaded:
-   - Body contains matter number
-   - Body contains at least one tab keyword (Exhibits, Key Documents, ...)
+2. `wait_for_ready(page)` + wait for body text to contain `Go Directly to Matter`
+3. Fill the matter field, then click search, then wait for the detail page
+4. Assert matter page loaded: body contains the matter number **and** at least one tab keyword (Exhibits, Key Documents, ...)
 
-Raise `MatterNotFoundError` if search does not land on detail view within timeout.
+Raise `MatterNotFoundError` if the field can't be filled, the search yields `No Records Found`, or the detail view doesn't appear within timeout.
+
+#### As implemented (recon-validated — do not "simplify" back to the idealized form below)
+
+The earlier draft suggested `get_by_role("button", name="Search").last`. That did **not** work against the live FileMaker DOM. The shipped `navigate.py` uses:
+
+- **Matter input** (`_fill_matter_number`): locate `.fm-textarea:has(.placeholder:text-is("eg M01234"))`, click its `.text`, backspace-clear (~15×), then `keyboard.type(matter, delay=30)`, and verify the typed value landed (3 attempts). FileMaker has no real `<input>`.
+- **Search button** (`_click_direct_matter_search`): among `button:has-text("Search")`, pick the one whose `bounding_box().y` falls in **300–450** (the "Go Directly to Matter" button, above the advanced-search button). ⚠️ This is a viewport-dependent heuristic — the most fragile part of the scraper; revisit first if navigation breaks.
+- **Detail-load wait**: `wait_for_function` polling `document.body.innerText.includes(matter_number)` with `2× page_load_timeout`, then re-`wait_for_ready`.
 
 ## Module: `metadata.py`
 
@@ -128,10 +129,21 @@ return downloads
 
 **Filename sanitization:** Replace unsafe chars; prefix with doc index if collisions.
 
+#### As implemented
+
+The shipped `download._wait_for_download` does **not** assume a clean `expect_download` per click. GO GET IT on the live site often opens a popup instead of streaming a download, so it tries, in order:
+
+1. `page.expect_download()` around the click (direct case).
+2. Inspect already-open `context.pages` for a pending download or a fetchable PDF.
+3. `page.expect_popup()` around a re-click, then `popup.expect_download()`.
+4. `_fetch_from_popup`: if the popup URL is a PDF, fetch bytes via `context.request.get(url)` and wrap them in a `_FetchedDownload` shim exposing `save_as`.
+
+⚠️ Known gap: `_fetch_from_popup` writes `_tmp_{index}_*` files into `DOWNLOAD_DIR` that are never deleted — clean these up (or use a temp dir) before zipping by directory glob.
+
 **Edge cases:**
 
 - Fewer than 10 rows → download all available
-- GO GET IT opens new tab instead of download → handle `page.context.expect_page()` fallback
+- GO GET IT opens new tab instead of download → popup + fetch fallback (above)
 - Recording types may not be PDF → still download whatever is served
 
 ## Module: `zipper.py`
@@ -196,10 +208,11 @@ When requesting Other Documents with max=10: **10 files in ZIP**, `downloaded_co
 
 ## Debugging checklist
 
-- [ ] Run with `--headed` and slow_mo=500
-- [ ] Screenshot on failure → `output/debug_{timestamp}.png`
-- [ ] Log page URL after each navigation step
-- [ ] Save HTML dump optional (`page.content()`)
+- [x] Run with `--headed` (`scrape ... --headed`)
+- [ ] **Screenshot on failure → `output/debug_{timestamp}.png` — NOT yet wired.** `cli._save_debug_screenshot` only prints a path; the browser is already closed by `service.py`'s context manager when the exception surfaces. To actually capture, take the screenshot inside `BrowserSession`/`scrape_matter`'s `except` before the context exits.
+- [x] Log page URL after each navigation step (`navigate.py` logs `page.url`)
+- [ ] Save HTML/body-text dump → also the source for `tests/fixtures/m12205_matter_page.txt`
+- [ ] `slow_mo` is not currently exposed via config — add to `BrowserSession.launch` if needed
 
 ## Performance
 

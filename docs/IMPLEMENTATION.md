@@ -17,16 +17,20 @@ Reference matter for development and demo: **`M12205`**, document type **`Other 
 
 Implement in this order. Do **not** start with email — the scraper is the highest-risk component.
 
+**Progress:** Phase 0 done. Phase 1 **implemented** (all modules below written, 10/10 unit tests pass) but **live scrape against UARB not yet validated** — selectors/regexes are unverified against the live DOM. Phases 2–3 are 3-line stubs.
+
 ### Phase 0 — Repo bootstrap (done)
 
 - [x] GitHub repo with docs and scaffold
-- [ ] Python venv + `pip install -r requirements.txt`
-- [ ] `playwright install chromium`
-- [ ] Copy `.env.example` → `.env`
+- [x] Python venv + `pip install -r requirements.txt`
+- [x] `playwright install chromium`
+- [x] Copy `.env.example` → `.env`
 
-### Phase 1 — Core scraper (CLI)
+### Phase 1 — Core scraper (CLI) — implemented, live-unverified
 
 **Goal:** `python -m regulatory_agent scrape M12205 --type "Other Documents"` produces a ZIP + JSON metadata.
+
+All tasks below are implemented. Remaining work: run against the live site, fix any selector/regex drift, and capture a body-text fixture for regression.
 
 | Task | Module | Notes |
 |------|--------|-------|

@@ -92,18 +92,45 @@ def _save_debug_screenshot() -> None:
 def parse_email(
     file: str = typer.Option(..., "--file", help="Path to plain-text email body"),
 ) -> None:
-    """Parse matter number and document type from email text (Phase 3)."""
+    """Parse matter number and document type from email text (regex fast-path)."""
+    from regulatory_agent.agent.parse import parse_request
+
     body = Path(file).read_text(encoding="utf-8")
-    console.print("[yellow]Not implemented yet.[/yellow]")
-    console.print(body[:200])
-    raise typer.Exit(code=2)
+    parsed = parse_request(body)
+    console.print(
+        json.dumps(
+            {
+                "matter_number": parsed.matter_number,
+                "document_type": parsed.document_type.value if parsed.document_type else None,
+                "ok": parsed.ok,
+                "error_reason": parsed.error_reason,
+            },
+            indent=2,
+        )
+    )
+    raise typer.Exit(code=0 if parsed.ok else 1)
 
 
 @app.command()
 def worker(once: bool = typer.Option(False, "--once", help="Poll inbox once and exit")) -> None:
-    """Poll agent inbox and process requests (Phase 2)."""
-    console.print("[yellow]Not implemented yet.[/yellow] See docs/EMAIL.md.")
-    raise typer.Exit(code=2)
+    """Poll the agent inbox and process requests (scrape + reply)."""
+    _configure_logging()
+    from regulatory_agent.email.gmail import GmailProvider
+    from regulatory_agent.worker import process_inbox_once, run_forever
+
+    provider = GmailProvider()
+    try:
+        if once:
+            handled = process_inbox_once(provider)
+            console.print(f"[green]Processed {handled} message(s).[/green]")
+        else:
+            console.print("[green]Worker running.[/green] Press Ctrl-C to stop.")
+            run_forever(provider)
+    except RuntimeError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Worker stopped.[/yellow]")
 
 
 if __name__ == "__main__":

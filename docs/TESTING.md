@@ -10,41 +10,45 @@
 
 ## Unit tests (`tests/`)
 
-### `test_parse.py`
+Current state: `test_parse.py`, `test_models.py`, `test_metadata.py` exist; 10 tests pass via `pytest -m "not live"`. The reply/parse-pipeline tests below are **planned** (Phase 2–3, not yet written).
 
-- Extract `M12205` from sample email
-- Map "other documents" → `DocumentType.OTHER_DOCUMENTS`
-- Reject email with no matter number
-- Reject unknown document type
+### `test_parse.py` (exists — currently fixture sanity only)
 
-### `test_models.py`
+- Sample email contains `M12205`
+- Sample email mentions "Other Documents"
+- _TODO once `agent/parse.py` lands:_ reject email with no matter number; reject unknown document type
 
-- Tab count parsing from sample text fixture
-- Date parsing `04/07/2025` → `2025-04-07`
+### `test_models.py` (exists)
 
-### `test_reply.py`
+- `DocumentType.from_user_text` exact + alias match, unknown → `None`
+
+### `test_metadata.py` (exists)
+
+- Date parsing (`April 7, 2025` and `04/07/2025` → `2025-04-07`)
+- `TAB_COUNT` / `DATE_RECEIVED` / `DATE_FINAL_SUBMISSIONS` regexes against a sample body
+
+### `test_reply.py` (exists)
 
 - Success body contains all tab counts
 - Zero transcripts/recordings → "no Transcripts or Recordings"
 - "10 out of 21" wording when partial download
+- Greeting, date formatting, empty-tab "nothing to attach", error template
 
 ## Fixtures
 
-`tests/fixtures/m12205_matter_page.txt` — snapshot of body text from matter page (capture during first successful scrape).
+`tests/fixtures/sample_request_email.txt` — assignment example email (exists).
 
-`tests/fixtures/sample_request_email.txt` — assignment example email.
+`tests/fixtures/m12205_matter_page.txt` — **not yet captured.** Snapshot the matter-page body text (`page.locator("body").inner_text()`) during the first successful live scrape so `test_metadata.py` can assert against real DOM output instead of a hand-written `SAMPLE_BODY`.
 
 ## Live scraper test
 
 ```bash
-pytest tests/test_scraper_live.py -m live --headed
+pytest tests/test_scraper_live.py -m live
 ```
 
-Mark as optional CI skip. Validates:
+Mark as optional CI skip. Validates navigation to M12205, exact tab counts (13/5/21/0/0), 10 downloads, metadata fields, and a 10-entry ZIP.
 
-- Navigation to M12205
-- Tab counts match expected ranges (not exact if site updates)
-- At least 1 download from Other Documents with `--max 1`
+> The test currently calls `scrape_matter(..., headless=True)` and asserts **exact** counts. For debugging, run the CLI with `--headed` instead (`scrape M12205 --type "Other Documents" --headed`); to make the test resilient to site updates, relax the exact-count asserts to ranges.
 
 ## Manual demo script (submission)
 
@@ -63,13 +67,13 @@ Verify:
 - [ ] JSON shows `downloaded_count: 10`, `available_in_tab: 21`
 - [ ] ZIP contains 10 PDF files
 
-### Step 2 — Parse only
+### Step 2 — Parse only (Phase 3 — not yet implemented)
 
-```powershell
+```bash
 python -m regulatory_agent parse-email --file tests/fixtures/sample_request_email.txt
 ```
 
-Verify structured output matches M12205 + Other Documents.
+Currently exits code 2 (stub). Once `agent/parse.py` lands, verify structured output matches M12205 + Other Documents.
 
 ### Step 3 — Email E2E
 
